@@ -1,0 +1,124 @@
+---
+title: "All_Genre_Pollstar"
+author: "Alyssa"
+date: '`r Sys.Date()`'
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up 
+
+Note: 
+- Market?
+- why same country different currency
+
+- Predict gross(revenue)
+- non-sold related 
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE}
+#read csv file
+library(readr)
+# %>%
+library(dplyr)
+#plotting
+library(ggplot2)
+#modeling
+library(Stat2Data)
+```
+
+revised csv
+  - removed na
+  - renamed variables
+```{r, eval = F}
+
+df <- read_csv('Pollstar_all_genres.csv', show_col_types = FALSE)
+
+# df1 <- df %>% na.omit(df) %>%
+#  rename('date' = 'Event Date',
+#         'number_of_shows' = 'Number of Shows',
+         # 'artist' = 'Headliner',
+         # 'sponsor' = 'Support',
+         # 'country' = 'Country',
+         # 'state' = 'State',
+         # 'market' = 'Market',
+         # 'company' = 'Company Type' ,
+         # 'currency' = 'Currency',
+         # 'promoter' = 'Promoter',
+         # 'genre' = 'Genre',
+         # 'ticket_sold' = 'Avg. Tickets Sold',
+         # 'revenue' = 'Avg. Gross USD',
+         # 'attendence' = 'Avg. Event Capacity',
+         # 'percent_capacity' = 'Avg. Capacity Sold',
+         # 'min_price' = 'Ticket Price Min USD',
+         # 'max_price' = 'Ticket Price Max USD',
+         # 'avg_price' = 'Ticket Price Avg. USD'
+         # )
+
+#write_csv(df1,'Pollstar_all_genres.csv')
+
+head(df)
+```
+
+# Modification:
+  1. date to DOW 
+  2. genre to fewer categories: (add multi-genre)
+  3. sponsor to numeral: # of promoters
+  4. state to regions (east, west etc)
+  5. company to fewer categories: multi-companies
+  6. promoter to fewer categories
+  Note: 
+   categories may still be too large after refine
+   can't use: avg-price, ticket-sold, percent-capacity
+   useless: currency, country, venue
+   undecided: headliner(too large), city (too large)
+
+
+```{r}
+# Convert DOW
+df1 = df
+df1$date <- weekdays.Date(df1$date)
+#Combine Genre
+df1$genre <- ifelse(grepl(",", df1$genre), "Multi Genre", df1$genre )
+```
+
+
+```{r}
+#convert to numerical 
+number_convertion_by_comma <- function(str){
+  if(grepl(",", str)){
+    return (length((unlist(strsplit(str, ",")))))
+  }
+  else{
+    return (1)
+  }
+}
+```
+
+```{r}
+df1$sponsor <- sapply(df1$sponsor, number_convertion_by_comma)
+length(unlist(strsplit(df$sponsor[1], ",")))
+df1$sponsor
+```
+
+
+
+
+
+
+## Model Selection
+
+Note: after first testing, do cross validation 
+
+```{r, eval = T}
+Full = lm(data = df2, revenue ~.)
+MSE = (summary(Full)$sigma)^2
+
+step(Full, scale=MSE)
+summary(Full)
+```
+
