@@ -1,0 +1,165 @@
+---
+title: "Regression Model"
+author: "Sioiok Wong"
+date: "2024-11-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Load Required Libraries
+```{r}
+library(ggplot2)
+library(dplyr)
+library(tidyr)
+library(scales)
+library(lubridate)
+```
+
+Load the Dataset
+```{r}
+all_genre = read.csv("all_genre.csv")
+```
+
+Define Functions to Summarize Data
+## Initial Data Review: Summarize numeric variables and character variables
+```{r}
+summarize_numeric = function(dataset) {
+  
+  dataset = select_if(dataset, is.numeric)
+  summary.table = data.frame(Attribute = names(dataset))
+  
+  summary.table = summary.table %>% 
+    mutate('Missing Values' = apply(dataset, 2, function (x) sum(is.na(x))),
+           'Unique Values' = apply(dataset, 2, function (x) length(unique(x))),
+           'Mean' = colMeans(dataset, na.rm = TRUE),
+           'Min' = apply(dataset, 2, function (x) min(x, na.rm = TRUE)),
+           'Max' = apply(dataset, 2, function (x) max(x, na.rm = TRUE)),
+           'SD' = apply(dataset, 2, function (x) sd(x, na.rm = TRUE))
+    )
+  summary.table
+}
+
+# Function to summarize character variables
+summarize_character = function(dataset) {
+  
+  dataset = select_if(dataset, is.character)
+  summary.table = data.frame(Attribute = names(dataset))
+  
+  summary.table = summary.table %>% 
+    mutate('Missing Values' = apply(dataset, 2, function (x) sum(is.na(x))),
+           'Unique Values' = apply(dataset, 2, function (x) length(unique(x))),
+    )
+  summary.table
+}
+```
+
+Data Summarization
+# Numeric Summary
+```{r}
+options(scipen = 999)
+numeric_summary <- summarize_numeric(all_genre)
+print(numeric_summary)
+```
+
+# Character Summary
+```{r}
+character_summary <- summarize_character(all_genre)
+print(character_summary)
+```
+
+Data Preprocessing
+```{r}
+# Convert Event.Date to Date Format and Extract Features
+all_genre <- all_genre %>%
+  mutate(Event.Date = as.Date(Event.Date, format = "%Y-%m-%d"),
+         Event_Year = year(Event.Date),
+         Event_Month = month(Event.Date),
+         Event_DayOfWeek = wday(Event.Date, label = TRUE))
+
+# Drop original Event.Date to avoid redundancy
+all_genre <- select(all_genre, -Event.Date)
+
+# Remove Country as it only has 1 unique value
+all_genre <- select(all_genre, -Country)
+
+# Handle Outliers (cap values at the 99th percentile)
+cap_outliers <- function(x) {
+  quantile_99 <- quantile(x, 0.99, na.rm = TRUE)
+  ifelse(x > quantile_99, quantile_99, x)
+}
+
+all_genre <- all_genre %>%
+  mutate(across(where(is.numeric), cap_outliers))
+
+# Fill NA values in numeric columns with mean values
+all_genre <- all_genre %>%
+  mutate_if(is.numeric, ~ ifelse(is.na(.), mean(., na.rm = TRUE), .))
+
+# Handle negative ticket prices by setting them to NA
+all_genre <- all_genre %>%
+  mutate(across(starts_with("Ticket.Price"), ~ ifelse(. < 0, NA, .)))
+
+# Fill remaining NA values with the column mean for consistency
+all_genre <- all_genre %>%
+  mutate_if(is.numeric, ~ ifelse(is.na(.), mean(., na.rm = TRUE), .))
+
+# One-Hot Encoding for Categorical Variables
+all_genre <- all_genre %>%
+  mutate(across(c(State, Market, Company.Type, Currency), as.factor)) %>%
+  mutate(across(where(is.factor), as.numeric))
+
+# Limit Genre to top 10 most frequent genres, encode the rest as "Other"
+top_genres <- all_genre %>%
+  count(Genre, sort = TRUE) %>%
+  top_n(10, n) %>%
+  pull(Genre)
+
+all_genre <- all_genre %>%
+  mutate(Genre = ifelse(Genre %in% top_genres, Genre, "Other")) %>%
+  mutate(Genre = as.numeric(factor(Genre)))
+```
+
+Define the Linear Regression Model Formula
+```{r}
+X <- all_genre %>% select(`Avg..Tickets.Sold`, `Avg..Event.Capacity`, `Avg..Capacity.Sold`, 
+                          `Ticket.Price.Min.USD`, `Ticket.Price.Max.USD`, Genre, `Number.of.Shows`,
+                          `Ticket.Price.Avg..USD`)
+Y <- all_genre$`Avg..Gross.USD`
+
+# Define the Linear Regression Model Formula
+# Specify the formula directly in the lm() function
+model <- lm(`Avg..Gross.USD` ~ `Avg..Tickets.Sold` + `Avg..Event.Capacity` + `Avg..Capacity.Sold` +
+             `Ticket.Price.Min.USD` + `Ticket.Price.Max.USD` + Genre + `Number.of.Shows` +
+             `Ticket.Price.Avg..USD`, data = all_genre)
+
+# Print Model Summary
+summary(model)
+
+# Visualize Actual vs Predicted Values
+# Predict using the model
+all_genre$predicted <- predict(model, all_genre)
+
+ggplot(all_genre, aes(x = predicted, y = `Avg..Gross.USD`)) +
+  geom_point(color = 'blue', alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Actual vs Predicted", x = "Predicted Values", y = "Actual Values") +
+  theme_minimal()
+```
+
+```{r}
+# Calculate RMSE and R-Squared
+
+# 1. RMSE Calculation
+rmse <- sqrt(mean((all_genre$`Avg..Gross.USD` - all_genre$predicted)^2))
+print(paste("RMSE:", rmse))
+
+# 2. R-Squared Calculation
+# R-Squared can also be directly extracted from the model summary
+r_squared <- summary(model)$r.squared
+print(paste("R-Squared:", r_squared))
+```
+
+
