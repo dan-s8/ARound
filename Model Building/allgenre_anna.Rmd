@@ -124,7 +124,42 @@ all_genre <- all_genre %>%
 
 Define the Linear Regression Model Formula
 ```{r}
+X <- all_genre %>% select(`Avg..Tickets.Sold`, `Avg..Event.Capacity`, `Avg..Capacity.Sold`, 
+                          `Ticket.Price.Min.USD`, `Ticket.Price.Max.USD`, Genre, `Number.of.Shows`,
+                          `Ticket.Price.Avg..USD`)
+Y <- all_genre$`Avg..Gross.USD`
 
+# Define the Linear Regression Model Formula
+# Specify the formula directly in the lm() function
+model <- lm(`Avg..Gross.USD` ~ `Avg..Tickets.Sold` + `Avg..Event.Capacity` + `Avg..Capacity.Sold` +
+             `Ticket.Price.Min.USD` + `Ticket.Price.Max.USD` + Genre + `Number.of.Shows` +
+             `Ticket.Price.Avg..USD`, data = all_genre)
+
+# Print Model Summary
+summary(model)
+
+# Visualize Actual vs Predicted Values
+# Predict using the model
+all_genre$predicted <- predict(model, all_genre)
+
+ggplot(all_genre, aes(x = predicted, y = `Avg..Gross.USD`)) +
+  geom_point(color = 'blue', alpha = 0.5) +
+  geom_abline(slope = 1, intercept = 0, color = "red", linetype = "dashed") +
+  labs(title = "Actual vs Predicted", x = "Predicted Values", y = "Actual Values") +
+  theme_minimal()
+```
+
+```{r}
+# Calculate RMSE and R-Squared
+
+# 1. RMSE Calculation
+rmse <- sqrt(mean((all_genre$`Avg..Gross.USD` - all_genre$predicted)^2))
+print(paste("RMSE:", rmse))
+
+# 2. R-Squared Calculation
+# R-Squared can also be directly extracted from the model summary
+r_squared <- summary(model)$r.squared
+print(paste("R-Squared:", r_squared))
 ```
 
 
