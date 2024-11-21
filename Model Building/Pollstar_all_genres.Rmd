@@ -1,0 +1,198 @@
+---
+title: "All_Genre_Pollstar"
+author: "Alyssa"
+date: "`r Sys.Date()`"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## Set up 
+
+```{r, echo=FALSE, warning= FALSE, message = FALSE}
+#read csv file
+library(readr)
+library(tidyverse)
+# %>%
+library(dplyr)
+#plotting
+library(ggplot2)
+#modeling
+library(Stat2Data)
+```
+
+revised csv
+  - removed na
+  - renamed variables
+```{r, eval = F}
+
+df <- read_csv('Pollstar_all_genres.csv', show_col_types = FALSE)
+
+
+# df1 <- df %>% 
+#   filter(
+#     Year >= 2020,
+#     !str_detect(Headliner, ' " '),
+#     Genre != 'Family Entertainment'
+#   ) 
+
+
+# write_csv(df1,'Pollstar_all_genres.csv')
+colnames(df1)
+
+# new df with necessary variables
+df1 <- df %>% select(c(2, 5, 6, 12:30, 31, 32,33,34,38, 43,44,47, 49, 50, 51,52, 53,46))
+df1<- df1 %>% drop_na()
+df2 <- df1 %>% filter(if_any(everything(), is.na))
+str(df1)
+summary(df1)
+```
+
+
+
+
+
+
+## check for data validity
+
+```{r} 
+#date distribution
+ggplot(data = df1, aes(x = day_of_week)) + 
+  geom_line(stat = "count", color = "black")+
+  labs(title = "date distribution", x = "date", y = "number of available date on this date")
+```
+
+```{r}
+#numerical distribution & outlier detection
+price <- ggplot(data = df1, aes(x = `Ticket Price Min USD`)) +
+    geom_histogram(binwidth = 5, fill = "blue",color = "black")
+price
+# issue: min price > max price
+invalid_min_max <- df1 [df1$`Ticket Price Min USD` > df1$`Ticket Price Max USD` |
+                          df1$`Ticket Price Min USD` == 0 | 
+                          df1$`Ticket Price Max USD` == 0,]
+# remove invalid rows(Min > max and 0)
+df2 <- anti_join(df1, invalid_min_max, by = names(invalid_min_max)) 
+
+
+price_new <- ggplot(data = df2, aes(x = `Ticket Price Min USD`)) +
+    geom_histogram(binwidth = 5, fill = "blue",color = "black")
+#summary for the cleaned dataset
+price_new
+summary(df2)
+df2 %>% arrange((`Ticket Price Min USD`))
+```
+
+
+# Variable Modification:
+  1. date to DOW 
+  2. genre to fewer categories: (add multi-genre)
+  3. sponsor to numeral: # of promoters
+  4. state to regions (east, west etc)
+  5. company to fewer categories: multi-companies
+  6. promoter to fewer categories
+  Note: 
+   categories may still be too large after refine
+   can't use: avg-price, ticket-sold, percent-capacity
+   useless: currency, country, venue
+   undecided: headliner(too large), city (too large)
+
+
+```{r, eval=T}
+#Combine Genre
+df2$Genre <- ifelse(grepl(",", df2$Genre), "Multi Genre", df2$Genre)
+modified_genre = length(unique(df2$Genre))
+
+str(df2)
+```
+
+
+```{r, eval = T}
+#convert to numerical 
+number_convertion_by_comma <- function(str){
+  if(grepl(",", str)){
+    str = length((unlist(strsplit(str, ","))))
+  }
+  else{str = 1}
+}
+```
+
+```{r, eval = T}
+# df1$sponsor = df$sponsor
+df2$Promoter <- sapply(df2$Promoter, number_convertion_by_comma)
+df2$Promoter <- as.integer(df2$Promoter)
+colnames(df2)
+summary(df2)
+```
+
+## Divide to training-testing set (20% : 80%)
+
+```{r}
+set.seed(1)
+rows <- sample(nrow(df2))
+shuffled <- df2[rows,]
+cut_off_index <- round(length(shuffled$Year) * 0.8)
+train_set <- shuffled[1:cut_off_index,]
+test_set <- shuffled[(cut_off_index + 1): length(shuffled$Year),]
+```
+
+```{r}
+summary(train_set)
+```
+
+```{r}
+summary(test_set)
+```
+
+
+```{r}
+colnames(train_set)
+```
+
+
+## Model Selection, stepwise regression
+
+```{r, eval = T}
+df3 = select(train_set, c(2:7,21:26, 30,31:32,34,35,36))
+df3$day_of_week <- as.factor(df3$day_of_week)
+df3$Month <-as.factor(df3$Month)
+Full = lm(data = df3, `Avg. Gross USD` ~.)
+MSE = (summary(Full)$sigma)^2
+model = step(Full, scale=MSE)
+
+RMSE = sqrt(summary(model)$sigma^2)
+summary(model)
+summary(model)$r.squared
+RMSE
+```
+
+```{r, eval = T}
+plot(model,c(1,2,5))
+```
+#Check for performance
+
+```{r}
+
+test_set$Month <- as.factor(test_set$Month)
+test_set$day_of_week <- as.factor(test_set$day_of_week)
+test_data = predict(model, newdata = test_set)
+test_res = test_set$`Avg. Gross USD` - test_data
+# mean(test_res)
+# sd(test_res)
+cor(test_set$`Avg. Gross USD`, test_data)
+
+
+crosscorr=cor(test_set$`Avg. Gross USD`,test_data)
+crosscorr^2
+
+#Change in r^2 from the training to the holdout
+shrinkage = summary(model)$r.squared-crosscorr^2
+shrinkage
+```
+
+
