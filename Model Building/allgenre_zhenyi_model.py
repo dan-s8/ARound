@@ -5,10 +5,11 @@
 
 import numpy as np
 import pandas as pd
+from scipy.stats import randint  # for RandomizedSearchCV use
 from sklearn.impute import SimpleImputer
-from sklearn.ensemble import RandomForestRegressor
 from sklearn.metrics import mean_squared_error, r2_score, make_scorer
-from sklearn.model_selection import train_test_split, KFold, cross_val_score, GridSearchCV
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor  # two alternative Regs
+from sklearn.model_selection import train_test_split, KFold, cross_val_score, RandomizedSearchCV  # instead of GridSearchCV
 
 
 pd.set_option('display.max_columns', 60)  # make sure all cols can be displayed at the same time
@@ -39,7 +40,7 @@ _, test_data = train_test_split(filtered_data_no_na, test_size=0.3, random_state
 # Ensure the training set is mutually exclusive by removing test rows from the original filtered dataset
 train_data = filtered_data.loc[~filtered_data.index.isin(test_data.index)]
 
-# # Check the results
+# Check the results
 print(f"Total filtered data size: {len(filtered_data)}")  # Total filtered data size: 79691
 print(f"Training set size (including NaNs): {len(train_data)}")  # Training set size (including NaNs): 78682
 print(f"Testing set size (no NaNs): {len(test_data)}")  # Testing set size (no NaNs): 1009
@@ -52,7 +53,6 @@ feature_columns = ['sp followers', 'sp popularity', 'yt View Count', 'yt Subscri
 
 X_train = train_data[feature_columns]
 y_train = train_data['Avg. Gross USD']
-
 
 # Note that Random Forest Reg cannot process MISSING values
 # Here we have two ways to deal with the issue
@@ -67,6 +67,15 @@ y_train = train_data['Avg. Gross USD']
 X_train = X_train.dropna()  # drop NaN
 y_train = y_train.loc[X_train.index]
 
+# Define scoring metrics
+rmse_scorer = make_scorer(mean_squared_error, greater_is_better=False, squared=False)  # RMSE
+r2_scorer = make_scorer(r2_score)  # R²
+
+# Set up cross-validation
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+
+
+# Model 1: Revised Random Forest Model
 
 # Define the Random Forest model
 rf_model = RandomForestRegressor(
@@ -74,61 +83,46 @@ rf_model = RandomForestRegressor(
     n_jobs=-1          # Use all available cores
 )
 
-# Define the hyper-parameter grid to search over
-# Try this grid first (with just four parameters and two values for each parameter)
-param_grid = {
-        'n_estimators': [100, 200],  # Reduce the number of trees to test
-        'max_depth': [None, 10],      # Limit max depth to None or a small depth (10)
-        'min_samples_split': [2, 5],  # Test only two values
-        'min_samples_leaf': [1, 2],   # Test only two values
+# Define the hyper-parameter space (compared to GridSearchCV, smaller grid for RandomizedSearchCV)
+param_dist = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [None, 10, 20, 30],
+    'min_samples_split': randint(2, 10),
+    'min_samples_leaf': randint(1, 5),
+    'max_features': ['sqrt', 'log2', None],
+    'bootstrap': [True, False]
 }
 
-# # Caution: This grid leads to memory error, which is currently unsolved
-# param_grid = {
-#     'n_estimators': [100, 500, 1000],  # Number of trees
-#     'max_depth': [None, 10, 20, 30],    # Max depth of each tree
-#     'min_samples_split': [2, 5, 10],    # Minimum samples required to split a node
-#     'min_samples_leaf': [1, 2, 4],      # Minimum samples required at each leaf node
-#     'max_features': ['auto', 'sqrt', 'log2'],  # Number of features to consider for the best split
-#     'bootstrap': [True, False]  # Whether to use bootstrap samples (True) or not (False)
-# }
+# Perform RandomizedSearchCV
+random_search = RandomizedSearchCV(rf_model, param_distributions=param_dist,
+                                   n_iter=10, cv=3, n_jobs=-1, random_state=42, verbose=2)
 
-# CROSS VALIDATION
-# Set up cross-validation
-kf = KFold(n_splits=5, shuffle=True, random_state=42)
+# Fit RandomSearchCV on the training data
+random_search.fit(X_train, y_train)
 
-# Set up GridSearchCV
-grid_search = GridSearchCV(estimator=rf_model, param_grid=param_grid,
-                           cv=kf, n_jobs=-1, verbose=2, scoring='neg_mean_squared_error', return_train_score=True)
+# Get the best parameters
+best_params_random = random_search.best_params_
+print(f"Best hyper-parameters found by RandomizedSearchCV: {best_params_random}")
 
-# Fit GridSearchCV on the training data
-grid_search.fit(X_train, y_train)
-
-# Get the best hyperparameters from the grid search
-best_params = grid_search.best_params_
-print(f"Best hyperparameters found: {best_params}")  # {'max_depth': None, 'min_samples_leaf': 1, 'min_samples_split': 2, 'n_estimators': 100}
-
-# Train the Random Forest model with the best parameters
-best_rf_model = grid_search.best_estimator_
+# Use the best model found by RandomizedSearchCV
+best_rf_random_model = random_search.best_estimator_
 
 # Make predictions on the testing set
 X_test = test_data[feature_columns]
 y_test = test_data['Avg. Gross USD']
-y_pred = best_rf_model.predict(X_test)
 
-# Calculate and print performance metrics (R² and RMSE)
-test_r2 = r2_score(y_test, y_pred)
-test_rmse = mean_squared_error(y_test, y_pred, squared=False)
-print(f"Test R² with best hyperparameters: {test_r2:.3f}")
-print(f"Test RMSE with best hyperparameters: {test_rmse:.2f}")
+# Predict and evaluate on the test set
+y_pred_random = best_rf_random_model.predict(X_test)
+random_r2 = r2_score(y_test, y_pred_random)
+random_rmse = mean_squared_error(y_test, y_pred_random, squared=False)
 
-# Define scoring metrics
-rmse_scorer = make_scorer(mean_squared_error, greater_is_better=False, squared=False)  # RMSE
-r2_scorer = make_scorer(r2_score)  # R²
+print(f"RandomizedSearchCV Model Test R²: {random_r2:.3f}")
+print(f"RandomizedSearchCV Model Test RMSE: {random_rmse:.2f}")
+
 
 # Cross-validation on the training set with the best model
 # Perform cross-validation for RMSE
-cv_rmse_scores = cross_val_score(best_rf_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
+cv_rmse_scores = cross_val_score(best_rf_random_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
 formatted_rmse_scores = [int(round(-score)) for score in cv_rmse_scores]  # Negate each score, round, and convert to integer
 mean_cv_rmse = int(round(-np.mean(cv_rmse_scores)))  # Negate the mean, round, and convert to integer
 
@@ -136,14 +130,70 @@ print("Cross-validation RMSE scores with best parameters:", formatted_rmse_score
 print("Mean CV RMSE with best parameters:", mean_cv_rmse)
 
 # Perform cross-validation for R²
-cv_r2_scores = cross_val_score(best_rf_model, X_train, y_train, cv=kf, scoring=r2_scorer)
+cv_r2_scores = cross_val_score(best_rf_random_model, X_train, y_train, cv=kf, scoring=r2_scorer)
 formatted_r2_scores = [round(score, 3) for score in cv_r2_scores]
 
 print("Cross-validation R² scores:", formatted_r2_scores)
 print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
 
 
-# Got the same results as previous RF model (without grid search). It indicates:
-# The current model configuration is already optimal, further hyper-parameter tuning may not provide significant improvements.
-# The problem may not be the hyper-parameters, but something else...
-# Such as the features, the quality of the data, or the inherent nature of the model for the problem we're trying to solve.
+# Gradient Boosting can perform better than Random Forest in some cases, especially when fine-tuned.
+# Model 2: Gradient Boosting Model
+
+# Define the Gradient Boosting model
+gb_model = GradientBoostingRegressor(random_state=42)
+
+# Fit the model on the training data
+gb_model.fit(X_train, y_train)
+
+# Make predictions on the testing set
+X_test = test_data[feature_columns]
+y_test = test_data['Avg. Gross USD']
+
+# Predict and evaluate on the test set
+y_pred_gb = gb_model.predict(X_test)
+gb_r2 = r2_score(y_test, y_pred_gb)
+gb_rmse = mean_squared_error(y_test, y_pred_gb, squared=False)
+
+print(f"Gradient Boosting Model Test R²: {gb_r2:.3f}")
+print(f"Gradient Boosting Model Test RMSE: {gb_rmse:.2f}")
+
+
+# Cross-validation on the training set with the best model
+# Perform cross-validation for RMSE
+cv_rmse_scores = cross_val_score(gb_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
+formatted_rmse_scores = [int(round(-score)) for score in cv_rmse_scores]  # Negate each score, round, and convert to integer
+mean_cv_rmse = int(round(-np.mean(cv_rmse_scores)))  # Negate the mean, round, and convert to integer
+
+print("Cross-validation RMSE scores with best parameters:", formatted_rmse_scores)
+print("Mean CV RMSE with best parameters:", mean_cv_rmse)
+
+# Perform cross-validation for R²
+cv_r2_scores = cross_val_score(gb_model, X_train, y_train, cv=kf, scoring=r2_scorer)
+formatted_r2_scores = [round(score, 3) for score in cv_r2_scores]
+
+print("Cross-validation R² scores:", formatted_r2_scores)
+print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
+
+
+# Results:
+
+# Model 1: Tried RandomizedSearchCV (instead of GridSearchCV used in previous code) and got similar R2 and RMSE
+
+# Best hyper-parameters found by RandomizedSearchCV: {'bootstrap': True, 'max_depth': None, 'max_features': None, 'min_samples_leaf': 3, 'min_samples_split': 6, 'n_estimators': 100}
+# RandomizedSearchCV Model Test R²: 0.933
+# RandomizedSearchCV Model Test RMSE: 170920.05
+# Cross-validation RMSE scores with best parameters: [159125, 135074, 143826, 171168, 189434]
+# Mean CV RMSE with best parameters: 159725
+# Cross-validation R² scores: [0.936, 0.946, 0.947, 0.917, 0.894]
+# Mean CV R²: 0.928
+
+
+# Model 2: Applied Gradient Boosting Model to predict but failed to improve R2 and RMSE significantly
+
+# Gradient Boosting Model Test R²: 0.938
+# Gradient Boosting Model Test RMSE: 164660.93
+# Cross-validation RMSE scores with best parameters: [161727, 150037, 157804, 152175, 187264]
+# Mean CV RMSE with best parameters: 161801
+# Cross-validation R² scores: [0.934, 0.934, 0.936, 0.935, 0.896]
+# Mean CV R²: 0.927
