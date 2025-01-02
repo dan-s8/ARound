@@ -2,21 +2,17 @@
 
 
 # Import Libs:
-
 import numpy as np
 import pandas as pd
-from scipy.stats import randint  # for RandomizedSearchCV use
-from sklearn.impute import SimpleImputer
+import xgboost as xgb
+import lightgbm as lgb
 from sklearn.metrics import mean_squared_error, r2_score, make_scorer
-from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor  # two alternative Regs
-from sklearn.model_selection import train_test_split, KFold, cross_val_score, RandomizedSearchCV  # instead of GridSearchCV
-
+from sklearn.model_selection import train_test_split, KFold, cross_val_score, RandomizedSearchCV
 
 pd.set_option('display.max_columns', 60)  # make sure all cols can be displayed at the same time
 
 
 # Load Data:
-
 df = pd.read_csv('combined_df.csv')
 
 # Note that 'Median age' is currently of Object type, we need to convert the string to a float
@@ -47,10 +43,10 @@ print(f"Testing set size (no NaNs): {len(test_data)}")  # Testing set size (no N
 
 
 # APPLY ML MODEL:
+# This week I'm trying XGBoost and LightGBM (for larger datasets and potentially better performance)
 # Extract features and target for the model
 feature_columns = ['sp followers', 'sp popularity', 'yt View Count', 'yt Subscriber Count', 'Total population',
                    'monthly_listeners', 'Number of Shows', 'Avg. Event Capacity', 'Ticket Price Min USD', 'Ticket Price Max USD']
-
 X_train = train_data[feature_columns]
 y_train = train_data['Avg. Gross USD']
 
@@ -75,54 +71,48 @@ r2_scorer = make_scorer(r2_score)  # R²
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 
-# Model 1: Revised Random Forest Model
+# Model 1: XGBoost Model
 
-# Define the Random Forest model
-rf_model = RandomForestRegressor(
-    random_state=42,  # Random state for reproducibility
-    n_jobs=-1          # Use all available cores
-)
+# Define the XGBoost model
+xgb_model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42)
 
-# Define the hyper-parameter space (compared to GridSearchCV, smaller grid for RandomizedSearchCV)
-param_dist = {
+# Hyperparameter space for XGBoost
+param_dist_xgb = {
     'n_estimators': [100, 200, 300],
-    'max_depth': [None, 10, 20, 30],
-    'min_samples_split': randint(2, 10),
-    'min_samples_leaf': randint(1, 5),
-    'max_features': ['sqrt', 'log2', None],
-    'bootstrap': [True, False]
+    'max_depth': [None, 3, 5, 10],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'subsample': [0.8, 1.0],
+    'colsample_bytree': [0.8, 1.0],
+    'min_child_weight': [1, 2, 3],
 }
 
-# Perform RandomizedSearchCV
-random_search = RandomizedSearchCV(rf_model, param_distributions=param_dist,
-                                   n_iter=10, cv=3, n_jobs=-1, random_state=42, verbose=2)
+# RandomizedSearchCV for XGBoost
+random_search_xgb = RandomizedSearchCV(xgb_model, param_distributions=param_dist_xgb,
+                                       n_iter=10, cv=3, n_jobs=-1, random_state=42, verbose=2)
+random_search_xgb.fit(X_train, y_train)
 
-# Fit RandomSearchCV on the training data
-random_search.fit(X_train, y_train)
+# Best XGBoost hyperparameters
+best_params_xgb = random_search_xgb.best_params_
+print(f"Best hyperparameters found by XGBoost RandomizedSearchCV: {best_params_xgb}")
 
-# Get the best parameters
-best_params_random = random_search.best_params_
-print(f"Best hyper-parameters found by RandomizedSearchCV: {best_params_random}")
-
-# Use the best model found by RandomizedSearchCV
-best_rf_random_model = random_search.best_estimator_
+# Get the best XGBoost model
+best_xgb_model = random_search_xgb.best_estimator_
 
 # Make predictions on the testing set
 X_test = test_data[feature_columns]
 y_test = test_data['Avg. Gross USD']
 
 # Predict and evaluate on the test set
-y_pred_random = best_rf_random_model.predict(X_test)
-random_r2 = r2_score(y_test, y_pred_random)
-random_rmse = mean_squared_error(y_test, y_pred_random, squared=False)
+y_pred_xgb = best_xgb_model.predict(X_test)
+xgb_r2 = r2_score(y_test, y_pred_xgb)
+xgb_rmse = mean_squared_error(y_test, y_pred_xgb, squared=False)
 
-print(f"RandomizedSearchCV Model Test R²: {random_r2:.3f}")
-print(f"RandomizedSearchCV Model Test RMSE: {random_rmse:.2f}")
-
+print(f"XGBoost Model Test R²: {xgb_r2:.3f}")
+print(f"XGBoost Model Test RMSE: {xgb_rmse:.2f}")
 
 # Cross-validation on the training set with the best model
 # Perform cross-validation for RMSE
-cv_rmse_scores = cross_val_score(best_rf_random_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
+cv_rmse_scores = cross_val_score(best_xgb_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
 formatted_rmse_scores = [int(round(-score)) for score in cv_rmse_scores]  # Negate each score, round, and convert to integer
 mean_cv_rmse = int(round(-np.mean(cv_rmse_scores)))  # Negate the mean, round, and convert to integer
 
@@ -130,38 +120,52 @@ print("Cross-validation RMSE scores with best parameters:", formatted_rmse_score
 print("Mean CV RMSE with best parameters:", mean_cv_rmse)
 
 # Perform cross-validation for R²
-cv_r2_scores = cross_val_score(best_rf_random_model, X_train, y_train, cv=kf, scoring=r2_scorer)
+cv_r2_scores = cross_val_score(best_xgb_model, X_train, y_train, cv=kf, scoring=r2_scorer)
 formatted_r2_scores = [round(score, 3) for score in cv_r2_scores]
 
 print("Cross-validation R² scores:", formatted_r2_scores)
 print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
 
 
-# Gradient Boosting can perform better than Random Forest in some cases, especially when fine-tuned.
-# Model 2: Gradient Boosting Model
+# Model 2: LightGBM Model
 
-# Define the Gradient Boosting model
-gb_model = GradientBoostingRegressor(random_state=42)
+# Define the LightGBM model
+lgb_model = lgb.LGBMRegressor(objective='regression', random_state=42)
 
-# Fit the model on the training data
-gb_model.fit(X_train, y_train)
+# Hyperparameter space for LightGBM
+param_dist_lgb = {
+    'n_estimators': [100, 200, 300],
+    'max_depth': [None, 3, 5, 10],
+    'learning_rate': [0.01, 0.1, 0.2],
+    'subsample': [0.8, 1.0],
+    'colsample_bytree': [0.8, 1.0],
+    'min_child_samples': [10, 20],
+    'num_leaves': [31, 50, 100]
+}
 
-# Make predictions on the testing set
-X_test = test_data[feature_columns]
-y_test = test_data['Avg. Gross USD']
+# RandomizedSearchCV for LightGBM
+random_search_lgb = RandomizedSearchCV(lgb_model, param_distributions=param_dist_lgb,
+                                       n_iter=10, cv=3, n_jobs=-1, random_state=42, verbose=2)
+random_search_lgb.fit(X_train, y_train)
+
+# Best LightGBM hyperparameters
+best_params_lgb = random_search_lgb.best_params_
+print(f"Best hyperparameters found by LightGBM RandomizedSearchCV: {best_params_lgb}")
+
+# Get the best LightGBM model
+best_lgb_model = random_search_lgb.best_estimator_
 
 # Predict and evaluate on the test set
-y_pred_gb = gb_model.predict(X_test)
-gb_r2 = r2_score(y_test, y_pred_gb)
-gb_rmse = mean_squared_error(y_test, y_pred_gb, squared=False)
+y_pred_lgb = best_lgb_model.predict(X_test)
+lgb_r2 = r2_score(y_test, y_pred_lgb)
+lgb_rmse = mean_squared_error(y_test, y_pred_lgb, squared=False)
 
-print(f"Gradient Boosting Model Test R²: {gb_r2:.3f}")
-print(f"Gradient Boosting Model Test RMSE: {gb_rmse:.2f}")
-
+print(f"LightGBM Model Test R²: {lgb_r2:.3f}")
+print(f"LightGBM Model Test RMSE: {lgb_rmse:.2f}")
 
 # Cross-validation on the training set with the best model
 # Perform cross-validation for RMSE
-cv_rmse_scores = cross_val_score(gb_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
+cv_rmse_scores = cross_val_score(best_lgb_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
 formatted_rmse_scores = [int(round(-score)) for score in cv_rmse_scores]  # Negate each score, round, and convert to integer
 mean_cv_rmse = int(round(-np.mean(cv_rmse_scores)))  # Negate the mean, round, and convert to integer
 
@@ -169,31 +173,27 @@ print("Cross-validation RMSE scores with best parameters:", formatted_rmse_score
 print("Mean CV RMSE with best parameters:", mean_cv_rmse)
 
 # Perform cross-validation for R²
-cv_r2_scores = cross_val_score(gb_model, X_train, y_train, cv=kf, scoring=r2_scorer)
+cv_r2_scores = cross_val_score(best_lgb_model, X_train, y_train, cv=kf, scoring=r2_scorer)
 formatted_r2_scores = [round(score, 3) for score in cv_r2_scores]
 
 print("Cross-validation R² scores:", formatted_r2_scores)
 print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
 
 
-# Results:
+# ---- XGBoost Mode Results ----
+# Best hyperparameters found by XGBoost RandomizedSearchCV: {'subsample': 0.8, 'n_estimators': 200, 'min_child_weight': 3, 'max_depth': 3, 'learning_rate': 0.2, 'colsample_bytree': 1.0}
+# XGBoost Model Test R²: 0.932
+# XGBoost Model Test RMSE: 172275.85
+# Cross-validation RMSE scores with best parameters: [140096, 133083, 145390, 166750, 180644]
+# Mean CV RMSE with best parameters: 153193
+# Cross-validation R² scores: [0.95, 0.948, 0.946, 0.921, 0.903]
+# Mean CV R²: 0.934
 
-# Model 1: Tried RandomizedSearchCV (instead of GridSearchCV used in previous code) and got similar R2 and RMSE
-
-# Best hyper-parameters found by RandomizedSearchCV: {'bootstrap': True, 'max_depth': None, 'max_features': None, 'min_samples_leaf': 3, 'min_samples_split': 6, 'n_estimators': 100}
-# RandomizedSearchCV Model Test R²: 0.933
-# RandomizedSearchCV Model Test RMSE: 170920.05
-# Cross-validation RMSE scores with best parameters: [159125, 135074, 143826, 171168, 189434]
-# Mean CV RMSE with best parameters: 159725
-# Cross-validation R² scores: [0.936, 0.946, 0.947, 0.917, 0.894]
-# Mean CV R²: 0.928
-
-
-# Model 2: Applied Gradient Boosting Model to predict but failed to improve R2 and RMSE significantly
-
-# Gradient Boosting Model Test R²: 0.938
-# Gradient Boosting Model Test RMSE: 164660.93
-# Cross-validation RMSE scores with best parameters: [161727, 150037, 157804, 152175, 187264]
-# Mean CV RMSE with best parameters: 161801
-# Cross-validation R² scores: [0.934, 0.934, 0.936, 0.935, 0.896]
-# Mean CV R²: 0.927
+# ---- LightGBM Model Results ----
+# Best hyperparameters found by LightGBM RandomizedSearchCV: {'subsample': 1.0, 'num_leaves': 31, 'n_estimators': 300, 'min_child_samples': 10, 'max_depth': 3, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
+# LightGBM Model Test R²: 0.946
+# LightGBM Model Test RMSE: 153141.58
+# Cross-validation RMSE scores with best parameters: [140041, 140192, 144223, 143813, 171903]
+# Mean CV RMSE with best parameters: 148034
+# Cross-validation R² scores: [0.95, 0.942, 0.946, 0.942, 0.912]
+# Mean CV R²: 0.939
