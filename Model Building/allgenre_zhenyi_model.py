@@ -4,7 +4,6 @@
 # Import Libs:
 import numpy as np
 import pandas as pd
-import xgboost as xgb
 import lightgbm as lgb
 from sklearn.metrics import mean_squared_error, r2_score, make_scorer
 from sklearn.model_selection import train_test_split, KFold, cross_val_score, RandomizedSearchCV
@@ -14,6 +13,7 @@ pd.set_option('display.max_columns', 60)  # make sure all cols can be displayed 
 
 # Load Data:
 df = pd.read_csv('combined_df.csv')
+# print(f"Total unfiltered data size: {len(df), len(df.columns)}")
 
 # Note that 'Median age' is currently of Object type, we need to convert the string to a float
 # df['Median age'] = df['Median age'].astype(float)  # 'Median age' should be of float64
@@ -71,76 +71,20 @@ r2_scorer = make_scorer(r2_score)  # R²
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
 
 
-# Model 1: XGBoost Model
-
-# Define the XGBoost model
-xgb_model = xgb.XGBRegressor(objective='reg:squarederror', random_state=42)
-
-# Hyperparameter space for XGBoost
-param_dist_xgb = {
-    'n_estimators': [100, 200, 300],
-    'max_depth': [None, 3, 5, 10],
-    'learning_rate': [0.01, 0.1, 0.2],
-    'subsample': [0.8, 1.0],
-    'colsample_bytree': [0.8, 1.0],
-    'min_child_weight': [1, 2, 3],
-}
-
-# RandomizedSearchCV for XGBoost
-random_search_xgb = RandomizedSearchCV(xgb_model, param_distributions=param_dist_xgb,
-                                       n_iter=10, cv=3, n_jobs=-1, random_state=42, verbose=2)
-random_search_xgb.fit(X_train, y_train)
-
-# Best XGBoost hyperparameters
-best_params_xgb = random_search_xgb.best_params_
-print(f"Best hyperparameters found by XGBoost RandomizedSearchCV: {best_params_xgb}")
-
-# Get the best XGBoost model
-best_xgb_model = random_search_xgb.best_estimator_
-
-# Make predictions on the testing set
-X_test = test_data[feature_columns]
-y_test = test_data['Avg. Gross USD']
-
-# Predict and evaluate on the test set
-y_pred_xgb = best_xgb_model.predict(X_test)
-xgb_r2 = r2_score(y_test, y_pred_xgb)
-xgb_rmse = mean_squared_error(y_test, y_pred_xgb, squared=False)
-
-print(f"XGBoost Model Test R²: {xgb_r2:.3f}")
-print(f"XGBoost Model Test RMSE: {xgb_rmse:.2f}")
-
-# Cross-validation on the training set with the best model
-# Perform cross-validation for RMSE
-cv_rmse_scores = cross_val_score(best_xgb_model, X_train, y_train, cv=kf, scoring=rmse_scorer)
-formatted_rmse_scores = [int(round(-score)) for score in cv_rmse_scores]  # Negate each score, round, and convert to integer
-mean_cv_rmse = int(round(-np.mean(cv_rmse_scores)))  # Negate the mean, round, and convert to integer
-
-print("Cross-validation RMSE scores with best parameters:", formatted_rmse_scores)
-print("Mean CV RMSE with best parameters:", mean_cv_rmse)
-
-# Perform cross-validation for R²
-cv_r2_scores = cross_val_score(best_xgb_model, X_train, y_train, cv=kf, scoring=r2_scorer)
-formatted_r2_scores = [round(score, 3) for score in cv_r2_scores]
-
-print("Cross-validation R² scores:", formatted_r2_scores)
-print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
-
-
-# Model 2: LightGBM Model
+# LightGBM Model
 
 # Define the LightGBM model
 lgb_model = lgb.LGBMRegressor(objective='regression', random_state=42)
 
 # Hyperparameter space for LightGBM
 param_dist_lgb = {
-    'n_estimators': [100, 200, 300],
-    'max_depth': [None, 3, 5, 10],
-    'learning_rate': [0.01, 0.1, 0.2],
-    'subsample': [0.8, 1.0],
-    'colsample_bytree': [0.8, 1.0],
-    'min_child_samples': [10, 20],
-    'num_leaves': [31, 50, 100]
+    'n_estimators': [100, 200, 300, 400, 500],      # Increase max number of trees
+    'max_depth': [None, 3, 5, 10, 12, 15, 20],       # Experiment with deeper trees
+    'learning_rate': [0.01, 0.05, 0.1, 0.2, 0.3],   # Try smaller learning rates
+    'subsample': [0.7, 0.8, 0.9, 1.0],               # Test smaller subsample
+    'colsample_bytree': [0.7, 0.8, 0.9, 1.0],        # Test different feature fractions
+    'min_child_samples': [5, 10, 20, 30, 50],         # Vary the leaf size constraint
+    'num_leaves': [31, 50, 100, 150, 200]            # Test more leaves for flexibility
 }
 
 # RandomizedSearchCV for LightGBM
@@ -154,6 +98,10 @@ print(f"Best hyperparameters found by LightGBM RandomizedSearchCV: {best_params_
 
 # Get the best LightGBM model
 best_lgb_model = random_search_lgb.best_estimator_
+
+# Make predictions on the testing set
+X_test = test_data[feature_columns]
+y_test = test_data['Avg. Gross USD']
 
 # Predict and evaluate on the test set
 y_pred_lgb = best_lgb_model.predict(X_test)
@@ -180,20 +128,12 @@ print("Cross-validation R² scores:", formatted_r2_scores)
 print("Mean CV R²:", round(np.mean(cv_r2_scores), 3))
 
 
-# ---- XGBoost Mode Results ----
-# Best hyperparameters found by XGBoost RandomizedSearchCV: {'subsample': 0.8, 'n_estimators': 200, 'min_child_weight': 3, 'max_depth': 3, 'learning_rate': 0.2, 'colsample_bytree': 1.0}
-# XGBoost Model Test R²: 0.932
-# XGBoost Model Test RMSE: 172275.85
-# Cross-validation RMSE scores with best parameters: [140096, 133083, 145390, 166750, 180644]
-# Mean CV RMSE with best parameters: 153193
-# Cross-validation R² scores: [0.95, 0.948, 0.946, 0.921, 0.903]
-# Mean CV R²: 0.934
-
 # ---- LightGBM Model Results ----
-# Best hyperparameters found by LightGBM RandomizedSearchCV: {'subsample': 1.0, 'num_leaves': 31, 'n_estimators': 300, 'min_child_samples': 10, 'max_depth': 3, 'learning_rate': 0.1, 'colsample_bytree': 1.0}
-# LightGBM Model Test R²: 0.946
-# LightGBM Model Test RMSE: 153141.58
-# Cross-validation RMSE scores with best parameters: [140041, 140192, 144223, 143813, 171903]
-# Mean CV RMSE with best parameters: 148034
-# Cross-validation R² scores: [0.95, 0.942, 0.946, 0.942, 0.912]
-# Mean CV R²: 0.939
+# Best hyper-parameters found by LightGBM RandomizedSearchCV: {'subsample': 0.9, 'num_leaves': 150, 'n_estimators': 500,
+#                              'min_child_samples': 10, 'max_depth': 12, 'learning_rate': 0.01, 'colsample_bytree': 0.9}
+
+# Cross-validation RMSE scores with best parameters: [135678, 139418, 146947, 147956, 180101]; Mean CV RMSE: 150020
+# Cross-validation R² scores with best parameters: [0.953, 0.943, 0.944, 0.938, 0.904]; Mean CV R²: 0.936
+
+# Test RMSE: 151189.62
+# Test R²: 0.948
